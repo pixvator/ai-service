@@ -1,6 +1,6 @@
 OUTPUT     = ./ai-service
 IMAGE_NAME := ai-service
-VERSION   := $(shell cat VERSION | tr -d '[:space:]')
+VERSION   := $(or $(shell cat VERSION | tr -d '[:space:]'),dev)
 MODULE    := github.com/QuantumNous/new-api
 
 .PHONY: all docker-stop docker-build docker-run
