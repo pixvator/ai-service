@@ -1,0 +1,11 @@
+services:
+  ai-service:
+    image: ai-service:latest
+    pull_policy: never
+    ports:
+      - "9528:9528"
+    env_file: .env
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/data
+    command: ["--log-dir", "/app/logs"]

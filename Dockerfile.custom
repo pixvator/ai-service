@@ -1,0 +1,13 @@
+FROM --platform=linux/amd64 debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata wget && rm -rf /var/lib/apt/lists/*
+
+COPY ai-service /app/ai-service
+RUN chmod +x /app/ai-service
+
+EXPOSE 9527
+
+WORKDIR /data
+
+ENTRYPOINT ["/app/ai-service"]
