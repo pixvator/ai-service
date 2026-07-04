@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
@@ -67,7 +68,7 @@ func HeadlessOAuthCallback(c *gin.Context) {
 		handleOAuthError(c, err)
 		return
 	}
-	user, err := findOrCreateHeadlessOAuthUser(provider, oauthUser, c.Query("aff"))
+	user, defaultToken, err := findOrCreateHeadlessOAuthUser(provider, oauthUser, c.Query("aff"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -76,42 +77,54 @@ func HeadlessOAuthCallback(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
 		return
 	}
+	data := gin.H{
+		"id":           user.Id,
+		"username":     user.Username,
+		"display_name": user.DisplayName,
+		"email":        user.Email,
+		"role":         user.Role,
+		"status":       user.Status,
+		"group":        user.Group,
+	}
+	if defaultToken != nil {
+		data["default_token"] = gin.H{
+			"id":              defaultToken.Id,
+			"name":            defaultToken.Name,
+			"key":             defaultToken.GetFullKey(),
+			"expired_time":    defaultToken.ExpiredTime,
+			"remain_quota":    defaultToken.RemainQuota,
+			"unlimited_quota": defaultToken.UnlimitedQuota,
+			"group":           defaultToken.Group,
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data": gin.H{
-			"id":           user.Id,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"email":        user.Email,
-			"role":         user.Role,
-			"status":       user.Status,
-			"group":        user.Group,
-		},
+		"data":    data,
 	})
 }
 
-func findOrCreateHeadlessOAuthUser(provider oauth.Provider, oauthUser *oauth.OAuthUser, affCode string) (*model.User, error) {
+func findOrCreateHeadlessOAuthUser(provider oauth.Provider, oauthUser *oauth.OAuthUser, affCode string) (*model.User, *model.Token, error) {
 	user := &model.User{}
 	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
 		if err := provider.FillUserByProviderID(user, oauthUser.ProviderUserID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if user.Id == 0 {
-			return nil, &OAuthUserDeletedError{}
+			return nil, nil, &OAuthUserDeletedError{}
 		}
-		return user, nil
+		return user, nil, nil
 	}
 	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" && provider.IsUserIDTaken(legacyID) {
 		if err := provider.FillUserByProviderID(user, legacyID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if user.Id != 0 {
-			return user, nil
+			return user, nil, nil
 		}
 	}
 	if !common.RegisterEnabled {
-		return nil, &OAuthRegistrationDisabledError{}
+		return nil, nil, &OAuthRegistrationDisabledError{}
 	}
 
 	user.Username = provider.GetProviderPrefix() + strconv.Itoa(model.GetMaxUserId()+1)
@@ -144,10 +157,14 @@ func findOrCreateHeadlessOAuthUser(provider oauth.Provider, oauthUser *oauth.OAu
 			})
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		user.FinalizeOAuthUserCreation(inviterID)
-		return user, nil
+		defaultToken, err := createHeadlessOAuthDefaultToken(user)
+		if err != nil {
+			return nil, nil, err
+		}
+		return user, defaultToken, nil
 	}
 
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -165,10 +182,21 @@ func findOrCreateHeadlessOAuthUser(provider oauth.Provider, oauthUser *oauth.OAu
 		}).Error
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	user.FinalizeOAuthUserCreation(inviterID)
-	return user, nil
+	defaultToken, err := createHeadlessOAuthDefaultToken(user)
+	if err != nil {
+		return nil, nil, err
+	}
+	return user, defaultToken, nil
+}
+
+func createHeadlessOAuthDefaultToken(user *model.User) (*model.Token, error) {
+	if !constant.GenerateDefaultToken {
+		return nil, nil
+	}
+	return createHeadlessDefaultToken(user.Id, user.Username)
 }
 
 func headlessOAuthAuthURL(provider oauth.Provider, providerName string, state string) (string, error) {

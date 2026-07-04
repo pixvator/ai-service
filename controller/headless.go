@@ -173,39 +173,73 @@ func HeadlessRegister(c *gin.Context) {
 		return
 	}
 
+	insertedUser := model.User{}
+	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
+		return
+	}
+
+	var defaultToken *model.Token
 	if constant.GenerateDefaultToken {
-		insertedUser := model.User{}
-		if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
-			return
-		}
-		key, err := common.GenerateKey()
+		defaultToken, err = createHeadlessDefaultToken(insertedUser.Id, cleanUser.Username)
 		if err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserDefaultTokenFailed)
-			common.SysLog("failed to generate token key: " + err.Error())
-			return
-		}
-		token := model.Token{
-			UserId:             insertedUser.Id,
-			Name:               cleanUser.Username + "的初始令牌",
-			Key:                key,
-			CreatedTime:        common.GetTimestamp(),
-			AccessedTime:       common.GetTimestamp(),
-			ExpiredTime:        -1,
-			RemainQuota:        500000,
-			UnlimitedQuota:     true,
-			ModelLimitsEnabled: false,
-		}
-		if setting.DefaultUseAutoGroup {
-			token.Group = "auto"
-		}
-		if err := token.Insert(); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)
 			return
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+	data := gin.H{
+		"id":           insertedUser.Id,
+		"username":     insertedUser.Username,
+		"display_name": insertedUser.DisplayName,
+		"email":        insertedUser.Email,
+		"role":         insertedUser.Role,
+		"status":       insertedUser.Status,
+		"group":        insertedUser.Group,
+	}
+	if defaultToken != nil {
+		data["default_token"] = gin.H{
+			"id":              defaultToken.Id,
+			"name":            defaultToken.Name,
+			"key":             defaultToken.GetFullKey(),
+			"expired_time":    defaultToken.ExpiredTime,
+			"remain_quota":    defaultToken.RemainQuota,
+			"unlimited_quota": defaultToken.UnlimitedQuota,
+			"group":           defaultToken.Group,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    data,
+	})
+}
+
+func createHeadlessDefaultToken(userID int, username string) (*model.Token, error) {
+	key, err := common.GenerateKey()
+	if err != nil {
+		common.SysLog("failed to generate token key: " + err.Error())
+		return nil, err
+	}
+	token := &model.Token{
+		UserId:             userID,
+		Name:               username + "的初始令牌",
+		Key:                key,
+		CreatedTime:        common.GetTimestamp(),
+		AccessedTime:       common.GetTimestamp(),
+		ExpiredTime:        -1,
+		RemainQuota:        500000,
+		UnlimitedQuota:     true,
+		ModelLimitsEnabled: false,
+	}
+	if setting.DefaultUseAutoGroup {
+		token.Group = "auto"
+	}
+	if err := token.Insert(); err != nil {
+		return nil, err
+	}
+	return token, nil
 }
 
 func verifyHeadlessTurnstile(c *gin.Context, token string) error {

@@ -111,7 +111,25 @@ Response:
 ```json
 {
   "success": true,
-  "message": ""
+  "message": "",
+  "data": {
+    "id": 1,
+    "username": "alice",
+    "display_name": "alice",
+    "email": "alice@example.com",
+    "role": 1,
+    "status": 1,
+    "group": "default",
+    "default_token": {
+      "id": 10,
+      "name": "alice的初始令牌",
+      "key": "sk-...",
+      "expired_time": -1,
+      "remain_quota": 500000,
+      "unlimited_quota": true,
+      "group": "auto"
+    }
+  }
 }
 ```
 
@@ -119,7 +137,8 @@ Notes:
 
 - Password login is not exposed by this gateway.
 - Registration only returns success/failure. It does not set cookies or return a session.
-- A usable `sk-...` token must be provisioned separately or by shared central logic.
+- `default_token` is present only when the shared `GENERATE_DEFAULT_TOKEN` option is enabled.
+- If `default_token` is absent, a usable `sk-...` token must be provisioned separately or by shared central logic.
 
 ## OAuth Registration
 
@@ -174,10 +193,21 @@ Response:
     "email": "alice@example.com",
     "role": 1,
     "status": 1,
-    "group": "default"
+    "group": "default",
+    "default_token": {
+      "id": 10,
+      "name": "alice的初始令牌",
+      "key": "sk-...",
+      "expired_time": -1,
+      "remain_quota": 500000,
+      "unlimited_quota": true,
+      "group": "auto"
+    }
   }
 }
 ```
+
+`default_token` is returned only when the OAuth callback creates a new user and the shared `GENERATE_DEFAULT_TOKEN` option is enabled. Existing OAuth users do not receive `default_token`, because the full secret for an existing token cannot be safely recovered later.
 
 ## Token Lifecycle
 
