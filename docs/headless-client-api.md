@@ -89,6 +89,8 @@ Response:
 }
 ```
 
+The verification code is stored against the encrypted email identifier used by the gateway. The raw email is only used for SMTP delivery.
+
 ### `POST /api/user/register`
 
 Creates a user. If email verification is enabled, the `code` must match the email code sent by `/api/verification/email`.
@@ -139,6 +141,49 @@ Notes:
 - Registration only returns success/failure. It does not set cookies or return a session.
 - `default_token` is present only when the shared `GENERATE_DEFAULT_TOKEN` option is enabled.
 - If `default_token` is absent, a usable `sk-...` token must be provisioned separately or by shared central logic.
+- Email is stored and compared as an encrypted deterministic value, so client-visible `email` fields returned by the gateway are not raw email addresses.
+
+### `GET /api/user/email-exists`
+
+Checks whether a user email already exists. This endpoint does not require Turnstile and does not depend on registration being enabled.
+
+Request:
+
+```http
+GET /api/user/email-exists?email=alice@example.com
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "exists": true,
+    "user": {
+      "id": 1,
+      "username": "alice",
+      "display_name": "alice",
+      "email": "encrypted_email_value",
+      "role": 1,
+      "status": 1,
+      "group": "default"
+    },
+    "default_token": {
+      "id": 10,
+      "name": "alice的初始令牌",
+      "key": "sk-...",
+      "expired_time": -1,
+      "remain_quota": 500000,
+      "unlimited_quota": true,
+      "group": "auto"
+    }
+  }
+}
+```
+
+When `exists` is `false`, `user` and `default_token` are omitted. `default_token` is also omitted when the user does not have the generated initial token.
 
 ## OAuth Registration
 

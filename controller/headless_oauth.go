@@ -77,25 +77,9 @@ func HeadlessOAuthCallback(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
 		return
 	}
-	data := gin.H{
-		"id":           user.Id,
-		"username":     user.Username,
-		"display_name": user.DisplayName,
-		"email":        user.Email,
-		"role":         user.Role,
-		"status":       user.Status,
-		"group":        user.Group,
-	}
+	data := headlessUserData(user)
 	if defaultToken != nil {
-		data["default_token"] = gin.H{
-			"id":              defaultToken.Id,
-			"name":            defaultToken.Name,
-			"key":             defaultToken.GetFullKey(),
-			"expired_time":    defaultToken.ExpiredTime,
-			"remain_quota":    defaultToken.RemainQuota,
-			"unlimited_quota": defaultToken.UnlimitedQuota,
-			"group":           defaultToken.Group,
-		}
+		data["default_token"] = headlessDefaultTokenData(defaultToken)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -140,7 +124,9 @@ func findOrCreateHeadlessOAuthUser(provider oauth.Provider, oauthUser *oauth.OAu
 	} else {
 		user.DisplayName = provider.GetName() + " User"
 	}
-	user.Email = oauthUser.Email
+	if oauthUser.Email != "" {
+		user.Email = encryptHeadlessEmail(oauthUser.Email)
+	}
 	user.Role = common.RoleCommonUser
 	user.Status = common.UserStatusEnabled
 	inviterID, _ := model.GetUserIdByAffCode(affCode)

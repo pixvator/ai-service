@@ -36,6 +36,7 @@ func setHeadlessAPIRouter(router *gin.Engine) {
 	userRoute := apiRouter.Group("/user")
 	{
 		userRoute.POST("/register", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.HeadlessTurnstileCheck(), controller.HeadlessRegister)
+		userRoute.GET("/email-exists", middleware.CriticalRateLimit(), controller.HeadlessCheckUserEmail)
 	}
 
 	tokenRoute := apiRouter.Group("/token")

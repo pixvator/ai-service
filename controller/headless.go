@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type headlessTurnstilePayload struct {
@@ -65,11 +67,12 @@ func SendEmailVerificationJSON(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	email := strings.TrimSpace(payload.Email)
+	email := normalizeHeadlessEmail(payload.Email)
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid email"})
 		return
 	}
+	encryptedEmail := encryptHeadlessEmail(email)
 	parts := strings.SplitN(email, "@", 2)
 	if len(parts) != 2 {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid email"})
@@ -93,13 +96,13 @@ func SendEmailVerificationJSON(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "email alias is not allowed"})
 		return
 	}
-	if model.IsEmailAlreadyTaken(email) {
+	if model.IsEmailAlreadyTaken(encryptedEmail) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "email already taken"})
 		return
 	}
 
 	code := common.GenerateVerificationCode(6)
-	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+	common.RegisterVerificationCodeWithKey(encryptedEmail, code, common.EmailVerificationPurpose)
 	subject := fmt.Sprintf("%s邮箱验证邮件", common.SystemName)
 	content := fmt.Sprintf("<p>您好，你正在进行%s邮箱验证。</p>"+
 		"<p>您的验证码为: <strong>%s</strong></p>"+
@@ -127,7 +130,7 @@ func HeadlessRegister(c *gin.Context) {
 		return
 	}
 	user.Username = strings.TrimSpace(user.Username)
-	user.Email = strings.TrimSpace(user.Email)
+	user.Email = normalizeHeadlessEmail(user.Email)
 	if user.Username == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -141,12 +144,16 @@ func HeadlessRegister(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailVerificationRequired)
 			return
 		}
-		if !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
+		if !common.VerifyCodeWithKey(encryptHeadlessEmail(user.Email), user.VerificationCode, common.EmailVerificationPurpose) {
 			common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
 			return
 		}
 	}
-	exist, err := model.CheckUserExistOrDeleted(user.Username, user.Email)
+	encryptedEmail := ""
+	if user.Email != "" {
+		encryptedEmail = encryptHeadlessEmail(user.Email)
+	}
+	exist, err := model.CheckUserExistOrDeleted(user.Username, encryptedEmail)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 		common.SysLog(fmt.Sprintf("CheckUserExistOrDeleted error: %v", err))
@@ -165,8 +172,8 @@ func HeadlessRegister(c *gin.Context) {
 		InviterId:   inviterID,
 		Role:        common.RoleCommonUser,
 	}
-	if common.EmailVerificationEnabled {
-		cleanUser.Email = user.Email
+	if encryptedEmail != "" {
+		cleanUser.Email = encryptedEmail
 	}
 	if err := cleanUser.Insert(inviterID); err != nil {
 		common.ApiError(c, err)
@@ -188,25 +195,9 @@ func HeadlessRegister(c *gin.Context) {
 		}
 	}
 
-	data := gin.H{
-		"id":           insertedUser.Id,
-		"username":     insertedUser.Username,
-		"display_name": insertedUser.DisplayName,
-		"email":        insertedUser.Email,
-		"role":         insertedUser.Role,
-		"status":       insertedUser.Status,
-		"group":        insertedUser.Group,
-	}
+	data := headlessUserData(&insertedUser)
 	if defaultToken != nil {
-		data["default_token"] = gin.H{
-			"id":              defaultToken.Id,
-			"name":            defaultToken.Name,
-			"key":             defaultToken.GetFullKey(),
-			"expired_time":    defaultToken.ExpiredTime,
-			"remain_quota":    defaultToken.RemainQuota,
-			"unlimited_quota": defaultToken.UnlimitedQuota,
-			"group":           defaultToken.Group,
-		}
+		data["default_token"] = headlessDefaultTokenData(defaultToken)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -214,6 +205,77 @@ func HeadlessRegister(c *gin.Context) {
 		"message": "",
 		"data":    data,
 	})
+}
+
+func HeadlessCheckUserEmail(c *gin.Context) {
+	email := normalizeHeadlessEmail(c.Query("email"))
+	if err := common.Validate.Var(email, "required,email"); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid email"})
+		return
+	}
+	user := model.User{}
+	err := model.DB.Where("email = ?", encryptHeadlessEmail(email)).First(&user).Error
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"exists": false,
+			},
+		})
+		return
+	}
+	data := gin.H{
+		"exists": true,
+		"user":   headlessUserData(&user),
+	}
+	if defaultToken, err := getHeadlessDefaultToken(user.Id, user.Username); err == nil {
+		data["default_token"] = headlessDefaultTokenData(defaultToken)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    data,
+	})
+}
+
+func headlessUserData(user *model.User) gin.H {
+	return gin.H{
+		"id":           user.Id,
+		"username":     user.Username,
+		"display_name": user.DisplayName,
+		"email":        user.Email,
+		"role":         user.Role,
+		"status":       user.Status,
+		"group":        user.Group,
+	}
+}
+
+func headlessDefaultTokenData(token *model.Token) gin.H {
+	return gin.H{
+		"id":              token.Id,
+		"name":            token.Name,
+		"key":             token.GetFullKey(),
+		"expired_time":    token.ExpiredTime,
+		"remain_quota":    token.RemainQuota,
+		"unlimited_quota": token.UnlimitedQuota,
+		"group":           token.Group,
+	}
+}
+
+func normalizeHeadlessEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func encryptHeadlessEmail(email string) string {
+	return common.GenerateHMAC(normalizeHeadlessEmail(email))
 }
 
 func createHeadlessDefaultToken(userID int, username string) (*model.Token, error) {
@@ -237,6 +299,15 @@ func createHeadlessDefaultToken(userID int, username string) (*model.Token, erro
 		token.Group = "auto"
 	}
 	if err := token.Insert(); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func getHeadlessDefaultToken(userID int, username string) (*model.Token, error) {
+	token := &model.Token{}
+	err := model.DB.Where("user_id = ? AND name = ?", userID, username+"的初始令牌").Order("id asc").First(token).Error
+	if err != nil {
 		return nil, err
 	}
 	return token, nil
