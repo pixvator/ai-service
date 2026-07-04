@@ -14,7 +14,7 @@ docker-stop:
 # ── Docker ────────────────────────────────────────────────────────────────────
 # docker-build: backend-only binary (no embedded frontend).
 # Frontend is deployed separately via web/deploy.sh.
-docker-build: prepare-embed
+docker-build:
 	@echo "Building Go binary for linux/amd64 (no embedded frontend)..."
 	@GOEXPERIMENT=greenteagc CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 		go build \
