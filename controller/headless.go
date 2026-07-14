@@ -54,6 +54,19 @@ func HeadlessTurnstileCheck() gin.HandlerFunc {
 	}
 }
 
+func VerifyTurnstileJSON(c *gin.Context) {
+	var payload headlessTurnstilePayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid json"})
+		return
+	}
+	if err := verifyHeadlessTurnstile(c, payload.TurnstileToken); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+}
+
 func SendEmailVerificationJSON(c *gin.Context) {
 	var payload struct {
 		Email          string `json:"email"`

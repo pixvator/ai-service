@@ -29,6 +29,7 @@ func setHeadlessAPIRouter(router *gin.Engine) {
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 
 	apiRouter.GET("/status", controller.GetStatus)
+	apiRouter.POST("/turnstile/verify", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.VerifyTurnstileJSON)
 	apiRouter.POST("/verification/email", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.SendEmailVerificationJSON)
 	apiRouter.GET("/oauth/:provider/login", middleware.CriticalRateLimit(), controller.HeadlessOAuthLogin)
 	apiRouter.GET("/oauth/:provider/callback", middleware.CriticalRateLimit(), controller.HeadlessOAuthCallback)
